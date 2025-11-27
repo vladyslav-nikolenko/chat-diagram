@@ -9,7 +9,6 @@ import ReactFlow, {
   Position,
   Handle,
   MarkerType,
-  ConnectionLineType,
 } from "reactflow";
 import dagre from "dagre";
 import "reactflow/dist/style.css";
@@ -168,18 +167,29 @@ function CustomNode({ data }: { data: CustomNodeData }) {
 }
 
 // Group node component for subflow groupings with dashed borders
+interface GroupNodeData {
+  label: string;
+  width?: number;
+  height?: number;
+}
+
 function GroupNode({
   data,
   style,
 }: {
-  data: { label: string };
+  data: GroupNodeData;
   style?: React.CSSProperties;
 }) {
+  // Use style prop if available (from dynamic calculation), otherwise use data.width/height (from original)
+  const width = style?.width || data.width;
+  const height = style?.height || data.height;
+
   return (
     <div
       className='react-flow__node-default'
       style={{
-        ...style,
+        width: width,
+        height: height,
         border: "2px dashed #94a3b8",
         borderRadius: "8px",
         backgroundColor: "rgba(241, 245, 249, 0.4)",
@@ -188,6 +198,7 @@ function GroupNode({
         boxShadow: "none",
         padding: 0,
         margin: 0,
+        ...style, // Override with style prop if provided (for position)
       }}
     >
       {/* Label at top-left */}
@@ -229,7 +240,8 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
   // 'TB' = Top-to-Bottom, 'LR' = Left-to-Right
-  dagreGraph.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 120 });
+  // Using LR to match original horizontal flow style
+  dagreGraph.setGraph({ rankdir: "LR", nodesep: 80, ranksep: 150 });
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
@@ -404,7 +416,14 @@ export function DiagramVisualization({
               width: maxX - minX + PADDING * 2,
               height: maxY - minY + PADDING * 2.2,
             },
-            data: { label: group.label },
+            data: {
+              label: group.label,
+              width: maxX - minX + PADDING * 2,
+              height: maxY - minY + PADDING * 2.2,
+            },
+            selectable: false,
+            draggable: false,
+            deletable: false,
             zIndex: -1, // Groups sit behind services
           });
         }
@@ -463,6 +482,8 @@ export function DiagramVisualization({
           fitViewOptions={{
             padding: 0.1, // Very minimal padding to zoom in significantly (default is 0.2)
           }}
+          minZoom={0.1}
+          maxZoom={2}
           style={{ width: "100%", height: "100%" }}
           defaultEdgeOptions={{
             type: "step",
