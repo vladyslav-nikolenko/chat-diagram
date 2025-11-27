@@ -1,4 +1,3 @@
-import { ArchitectureData } from "./CloudArchitecturePlanner";
 import { Building2, Layers, DollarSign, Rocket } from "lucide-react";
 import { DiagramVisualization } from "./DiagramVisualization";
 import { Button } from "./ui/button";
@@ -10,6 +9,7 @@ import {
   DialogTrigger,
 } from "./ui/dialog";
 import { toast } from "sonner";
+import { ArchitectureData } from "./types";
 
 interface DiagramPanelProps {
   architectureData: ArchitectureData | null;

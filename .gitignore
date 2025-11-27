@@ -1,16 +1,17 @@
 # Dependencies
 node_modules/
+**/node_modules/
 .pnp
 .pnp.js
+*.zip
+node_modules.zip
 
 # Testing
 coverage/
 .nyc_output
 
 # Production
-dist/
 build/
-*.local
 
 # Environment variables
 .env
@@ -48,6 +49,9 @@ Thumbs.db
 # Vite
 .vite/
 vite.config.js.timestamp-*
+dist/
+dist-ssr/
+*.local
 
 # TypeScript
 *.tsbuildinfo
@@ -93,9 +97,14 @@ out/
 # Temporary files
 *.tmp
 *.temp
+temp_*.tsx
+*.tsx.bak
 
 # Lock files (optional - some teams prefer to commit these)
+# Uncomment the following lines if you want to ignore lock files
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
+# **/package-lock.json
+# **/pnpm-lock.yaml
 

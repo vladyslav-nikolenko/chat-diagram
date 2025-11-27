@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { Message, ArchitectureData } from "./CloudArchitecturePlanner";
+import { useState, useRef, useEffect, Dispatch, SetStateAction } from "react";
+import { Message } from "./CloudArchitecturePlanner";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import {
@@ -18,12 +18,12 @@ import {
   CollapsibleTrigger,
 } from "./ui/collapsible";
 import { Send, User, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
-import { generateMockArchitecture } from "../utils/mockArchitecture";
+import { ArchitectureData } from "./types";
 import aiAssistantIcon from "figma:asset/876d10c7ac11789ece817be7e9397640e2c93a0b.png";
 
 interface ChatPanelProps {
   messages: Message[];
-  setMessages: (messages: Message[]) => void;
+  setMessages: Dispatch<SetStateAction<Message[]>>; // Використовуємо Dispatch
   setArchitectureData: (data: ArchitectureData) => void;
   selectedProvider: string;
   setSelectedProvider: (provider: string) => void;
@@ -44,7 +44,7 @@ export function ChatPanel({
   const [region, setRegion] = useState("us-east-1");
   const [hasGeneratedArchitecture, setHasGeneratedArchitecture] =
     useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(true);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom when messages change
@@ -62,7 +62,7 @@ export function ChatPanel({
       timestamp: new Date(),
     };
 
-    setMessages([...messages, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInputMessage("");
     setIsGenerating(true);
 
@@ -71,52 +71,61 @@ export function ChatPanel({
       setIsConfigOpen(false);
     }
 
-    // Simulate AI processing
-    setTimeout(() => {
-      // Check if this is the first architecture generation request
-      const shouldGenerateArchitecture = !hasGeneratedArchitecture;
+    // Backend API call
+    try {
+      const requestBody = {
+        prompt: inputMessage,
+        provider: "aws",
+        config: {
+          expectedLoad: expectedLoad || "Standard",
+          avgUsers: avgUsers || "Not specified",
+          storageNeeds: storageNeeds || "Standard",
+          region: region || "",
+        },
+      };
 
-      let assistantMessage: Message;
+      const response = await fetch(
+        "http://localhost:3000/api/generate-architecture",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        }
+      );
 
-      if (shouldGenerateArchitecture) {
-        const architectureData = generateMockArchitecture(
-          selectedProvider,
-          expectedLoad,
-          avgUsers,
-          storageNeeds
-        );
-        setArchitectureData(architectureData);
-        setHasGeneratedArchitecture(true);
-
-        assistantMessage = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: `I've generated a cloud architecture based on your requirements:\n\n• **Cloud Provider**: ${selectedProvider.toUpperCase()}\n• **Expected Load**: ${
-            expectedLoad || "Standard"
-          }\n• **Average Users**: ${
-            avgUsers || "Not specified"
-          }\n• **Storage Needs**: ${
-            storageNeeds || "Standard"
-          }\n• **Region**: ${region}\n\nThe architecture includes:\n${architectureData.nodes
-            .map((n) => `- ${n.data.label}`)
-            .join("\n")}\n\nEstimated monthly cost: **${
-            architectureData.totalCost
-          }**\n\nThe diagram on the left shows how these services connect. You can view detailed pricing or deploy the architecture using the buttons below the diagram. Feel free to ask me any questions!`,
-          timestamp: new Date(),
-        };
-      } else {
-        // Generate a helpful response for follow-up questions
-        assistantMessage = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: generateFollowUpResponse(inputMessage, selectedProvider),
-          timestamp: new Date(),
-        };
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      const data: ArchitectureData = await response.json();
+
+      setArchitectureData(data);
+      setHasGeneratedArchitecture(true);
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `I've generated the architecture based on your request.\n\n• **Services**: ${data.services.length}\n• **Total Cost**: ${data.totalCost}\n\nThe diagram is updated. You can review the details by clicking the buttons below the diagram, or ask me to make changes.`,
+        timestamp: new Date(),
+      };
+
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error("Error during backend request:", error);
+
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content:
+          "Sorry, an error occurred while generating the architecture. Please check if the server is running and try again.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsGenerating(false);
-    }, 1500);
+    }
   };
 
   const generateFollowUpResponse = (
@@ -321,7 +330,7 @@ export function ChatPanel({
                   {message.content}
                 </div>
                 <div
-                  className={`text-xs mt-2 ${
+                  className={`text-xs ${
                     message.role === "user"
                       ? "text-orange-100"
                       : "text-slate-400"

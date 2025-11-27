@@ -136,7 +136,7 @@ npm install
 npm run dev
 ```
 
-The application will open at `http://localhost:3000` showing the interactive cloud architecture diagram.
+The application will open at `http://localhost:5173` showing the interactive cloud architecture diagram.
 
 ## Testing
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { DiagramPanel } from "./DiagramPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
+import { ArchitectureData } from "./types";
 
 export interface CloudProvider {
   id: string;
@@ -33,13 +34,6 @@ export interface PricingItem {
   service: string;
   description: string;
   cost: string;
-}
-
-export interface ArchitectureData {
-  nodes: ArchitectureNode[];
-  edges: ArchitectureEdge[];
-  pricing: PricingItem[];
-  totalCost: string;
 }
 
 export function CloudArchitecturePlanner() {
