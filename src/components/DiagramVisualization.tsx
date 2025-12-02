@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import ReactFlow, {
   Node,
   Edge,
@@ -10,32 +10,58 @@ import ReactFlow, {
   Handle,
   MarkerType,
 } from "reactflow";
+import dagre from "dagre";
 import "reactflow/dist/style.css";
-import { ArchitectureData } from "./CloudArchitecturePlanner";
+import { ArchitectureData } from "./types";
+
+// --- 1. Interfaces (Matches your JSON Structure) ---
+
+export interface ServiceNode {
+  id: string;
+  label: string;
+  type: string; // e.g. "custom"
+  iconUrl?: string;
+  description?: string;
+  groupId?: string; // Links to a group
+}
+
+export interface ServiceGroup {
+  id: string;
+  label: string;
+}
+
+export interface ServiceConnection {
+  id: string;
+  sourceId: string;
+  targetId: string;
+}
 
 interface DiagramVisualizationProps {
   architectureData: ArchitectureData;
-  selectedProvider: string;
 }
+
+// --- 2. Custom Component Types ---
 
 interface CustomNodeData {
   label: string;
   iconUrl?: string;
   description?: string;
-  position?: Position;
-  usedHandles?: {
-    sourceTop?: boolean;
-    sourceRight?: boolean;
-    sourceBottom?: boolean;
-    sourceLeft?: boolean;
-    targetTop?: boolean;
-    targetRight?: boolean;
-    targetBottom?: boolean;
-    targetLeft?: boolean;
-  };
+  usedHandles?: UsedHandles;
+  _groupId?: string; // Internal helper
 }
 
-// Custom node component that only shows handles that are actually used
+type UsedHandles = {
+  sourceTop?: boolean;
+  sourceRight?: boolean;
+  sourceBottom?: boolean;
+  sourceLeft?: boolean;
+  targetTop?: boolean;
+  targetRight?: boolean;
+  targetBottom?: boolean;
+  targetLeft?: boolean;
+};
+
+// Node Component: Renders the Cloud Service Card
 function CustomNode({ data }: { data: CustomNodeData }) {
   const { usedHandles } = data;
 
@@ -143,17 +169,27 @@ function CustomNode({ data }: { data: CustomNodeData }) {
 // Group node component for subflow groupings with dashed borders
 interface GroupNodeData {
   label: string;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
 }
 
-function GroupNode({ data }: { data: GroupNodeData }) {
+function GroupNode({
+  data,
+  style,
+}: {
+  data: GroupNodeData;
+  style?: React.CSSProperties;
+}) {
+  // Use style prop if available (from dynamic calculation), otherwise use data.width/height (from original)
+  const width = style?.width || data.width;
+  const height = style?.height || data.height;
+
   return (
     <div
       className='react-flow__node-default'
       style={{
-        width: data.width,
-        height: data.height,
+        width: width,
+        height: height,
         border: "2px dashed #94a3b8",
         borderRadius: "8px",
         backgroundColor: "rgba(241, 245, 249, 0.4)",
@@ -162,6 +198,7 @@ function GroupNode({ data }: { data: GroupNodeData }) {
         boxShadow: "none",
         padding: 0,
         margin: 0,
+        ...style, // Override with style prop if provided (for position)
       }}
     >
       {/* Label at top-left */}
@@ -192,606 +229,210 @@ const nodeTypes = {
   group: GroupNode,
 };
 
+// --- 3. Layout Logic Helper Functions ---
+
+const NODE_WIDTH = 200; // Approximate width of card
+const NODE_HEIGHT = 150; // Approximate height of card
+
+// Uses Dagre to calculate X/Y coordinates for services
+const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+  // 'TB' = Top-to-Bottom, 'LR' = Left-to-Right
+  // Using LR to match original horizontal flow style
+  dagreGraph.setGraph({ rankdir: "LR", nodesep: 80, ranksep: 150 });
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const layoutedNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - NODE_WIDTH / 2,
+        y: nodeWithPosition.y - NODE_HEIGHT / 2,
+      },
+    };
+  });
+
+  return { nodes: layoutedNodes, edges };
+};
+
+// Calculates which handles to show based on the direction of the connection
+const calculateUsedHandles = (edges: Edge[], layoutedNodes: Node[]) => {
+  const handleMap: Record<string, UsedHandles> = {};
+  const nodePosMap = new Map(layoutedNodes.map((n) => [n.id, n.position]));
+
+  const ensureMap = (id: string) => {
+    if (!handleMap[id]) handleMap[id] = {};
+  };
+
+  edges.forEach((edge) => {
+    const srcPos = nodePosMap.get(edge.source);
+    const tgtPos = nodePosMap.get(edge.target);
+
+    if (!srcPos || !tgtPos) return;
+
+    ensureMap(edge.source);
+    ensureMap(edge.target);
+
+    const dx = tgtPos.x - srcPos.x;
+    const dy = tgtPos.y - srcPos.y;
+
+    // Heuristic: Is the connection mostly Horizontal or Vertical?
+    let sourceHandle = "sourceRight";
+    let targetHandle = "targetLeft";
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal flow
+      if (dx > 0) {
+        sourceHandle = "sourceRight";
+        targetHandle = "targetLeft";
+      } else {
+        sourceHandle = "sourceLeft";
+        targetHandle = "targetRight";
+      }
+    } else {
+      // Vertical flow
+      if (dy > 0) {
+        sourceHandle = "sourceBottom";
+        targetHandle = "targetTop";
+      } else {
+        sourceHandle = "sourceTop";
+        targetHandle = "targetBottom";
+      }
+    }
+
+    // @ts-ignore - Dynamic access safely handled by ensuringMap
+    handleMap[edge.source][sourceHandle] = true;
+    // @ts-ignore
+    handleMap[edge.target][targetHandle] = true;
+
+    // Apply specific handle IDs to the edge so the line connects to the right spot
+    edge.sourceHandle = sourceHandle.replace("source", "source-").toLowerCase();
+    edge.targetHandle = targetHandle.replace("target", "target-").toLowerCase();
+  });
+
+  return { handleMap, edges };
+};
+
+// --- 4. Main Component ---
+
 export function DiagramVisualization({
   architectureData,
 }: DiagramVisualizationProps) {
-  // Define edges first
-  const initialEdges: Edge[] = useMemo(
-    () => [
-      // Web Console section connections
-      // CloudFront → S3: RIGHT → LEFT (S3 is to the right of CloudFront)
-      {
-        id: "web-1",
-        source: "cloudfront",
-        sourceHandle: "source-right",
-        target: "s3-web",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Connection from Web Console to REST API
-      // CloudFront → API Gateway: BOTTOM → TOP (API Gateway is below CloudFront)
-      {
-        id: "web-to-api",
-        source: "cloudfront",
-        sourceHandle: "source-bottom",
-        target: "api-gateway",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // REST API section connections
-      // API Gateway → Lambda: RIGHT → LEFT (Lambda is to the right of API Gateway)
-      {
-        id: "api-1",
-        source: "api-gateway",
-        sourceHandle: "source-right",
-        target: "lambda",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // API Gateway → Cognito: BOTTOM → TOP (Cognito is below API Gateway)
-      {
-        id: "api-2",
-        source: "api-gateway",
-        sourceHandle: "source-bottom",
-        target: "cognito",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Cognito → IAM: RIGHT → LEFT (IAM is to the right of Cognito)
-      {
-        id: "api-3",
-        source: "cognito",
-        sourceHandle: "source-right",
-        target: "iam",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Image Pipeline section connections
-      // Docker Image → S3 (artifacts): RIGHT → LEFT
-      {
-        id: "img-1",
-        source: "docker-image",
-        sourceHandle: "source-right",
-        target: "s3-artifacts",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // S3 (artifacts) → CodeBuild: RIGHT → LEFT (horizontal connection, same level)
-      {
-        id: "img-2",
-        source: "s3-artifacts",
-        sourceHandle: "source-right",
-        target: "code-build",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // CodeBuild → ECR: BOTTOM → TOP (ECR is directly below CodeBuild)
-      {
-        id: "img-4",
-        source: "code-build",
-        sourceHandle: "source-bottom",
-        target: "ecr",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Load Testing Engine section connections
-      // Lambda → S3 (test data): LEFT → RIGHT (Lambda writes to S3, S3 is to the left)
-      {
-        id: "load-1",
-        source: "lambda-orchestration",
-        sourceHandle: "source-left",
-        target: "s3-test-data",
-        targetHandle: "target-right",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Lambda ↔ DynamoDB: bidirectional
-      // Lambda → DynamoDB: RIGHT → LEFT
-      {
-        id: "load-2",
-        source: "lambda-orchestration",
-        sourceHandle: "source-right",
-        target: "dynamodb",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // DynamoDB → Lambda: LEFT → RIGHT
-      {
-        id: "load-3",
-        source: "dynamodb",
-        sourceHandle: "source-left",
-        target: "lambda-orchestration",
-        targetHandle: "target-right",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // SQS → Lambda: TOP → BOTTOM (Lambda is above SQS, closer vertically)
-      {
-        id: "load-4",
-        source: "sqs",
-        sourceHandle: "source-top",
-        target: "lambda-orchestration",
-        targetHandle: "target-bottom",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Lambda → Fargate: BOTTOM → TOP
-      {
-        id: "load-5",
-        source: "lambda-orchestration",
-        sourceHandle: "source-bottom",
-        target: "fargate",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Fargate ↔ ECR: bidirectional
-      // Fargate → ECR: RIGHT → LEFT
-      {
-        id: "load-6",
-        source: "fargate",
-        sourceHandle: "source-right",
-        target: "ecr",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // ECR → Fargate: LEFT → RIGHT
-      {
-        id: "load-7",
-        source: "ecr",
-        sourceHandle: "source-left",
-        target: "fargate",
-        targetHandle: "target-right",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Fargate → CloudWatch: BOTTOM → TOP
-      {
-        id: "load-8",
-        source: "fargate",
-        sourceHandle: "source-bottom",
-        target: "cloudwatch",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // Connections from REST API to Load Testing Engine
-      // Lambda (REST API) → Lambda (orchestration): RIGHT → LEFT (mostly horizontal)
-      {
-        id: "api-to-load-1",
-        source: "lambda",
-        sourceHandle: "source-right",
-        target: "lambda-orchestration",
-        targetHandle: "target-left",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-      // API Gateway → SQS: BOTTOM → TOP (SQS is below API Gateway, closer vertically)
-      {
-        id: "api-to-load-2",
-        source: "api-gateway",
-        sourceHandle: "source-bottom",
-        target: "sqs",
-        targetHandle: "target-top",
-        type: "step",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "#ff9a6e",
-        },
-        style: { stroke: "#ff9a6e", strokeWidth: 2 },
-        animated: true,
-      },
-    ],
-    []
-  );
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  // Calculate which handles are used for each node
-  const usedHandlesMap = useMemo(() => {
-    const handleMap: Record<
-      string,
-      {
-        sourceTop?: boolean;
-        sourceRight?: boolean;
-        sourceBottom?: boolean;
-        sourceLeft?: boolean;
-        targetTop?: boolean;
-        targetRight?: boolean;
-        targetBottom?: boolean;
-        targetLeft?: boolean;
-      }
-    > = {};
+  useEffect(() => {
+    if (!architectureData || !architectureData.services) return;
 
-    initialEdges.forEach((edge) => {
-      // Mark source handles
-      if (edge.sourceHandle) {
-        if (!handleMap[edge.source]) {
-          handleMap[edge.source] = {};
+    // --- Step A: Prepare raw edges ---
+    const rawEdges: Edge[] = architectureData.connections.map((conn) => ({
+      id: conn.id,
+      source: conn.sourceId,
+      target: conn.targetId,
+      type: "step",
+      animated: true,
+      style: { stroke: "#ff9a6e", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#ff9a6e" },
+    }));
+
+    // --- Step B: Prepare raw service nodes (position 0,0) ---
+    const serviceNodes: Node[] = architectureData.services.map((svc) => ({
+      id: svc.id,
+      type: "custom",
+      data: {
+        label: svc.label,
+        description: svc.description,
+        iconUrl: svc.iconUrl,
+        usedHandles: {},
+        _groupId: svc.groupId, // Temporary store for group calc
+      },
+      position: { x: 0, y: 0 },
+      zIndex: 10, // Services sit above groups
+    }));
+
+    // --- Step C: Run Auto Layout (Dagre) ---
+    const layoutResult = getLayoutedElements(serviceNodes, rawEdges);
+
+    // --- Step D: Calculate Used Handles ---
+    const { handleMap, edges: finalEdges } = calculateUsedHandles(
+      layoutResult.edges,
+      layoutResult.nodes
+    );
+
+    // Apply calculated handles to the nodes
+    const nodesWithHandles = layoutResult.nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        usedHandles: handleMap[node.id] || {},
+      },
+    }));
+
+    // --- Step E: Generate Group Boxes (Bounding Box Calculation) ---
+    const finalNodes = [...nodesWithHandles];
+
+    if (architectureData.groups) {
+      const PADDING = 40;
+
+      architectureData.groups.forEach((group) => {
+        // Find all nodes that belong to this group
+        const children = nodesWithHandles.filter(
+          (n) => n.data._groupId === group.id
+        );
+
+        if (children.length > 0) {
+          // Calculate the bounding box
+          const minX = Math.min(...children.map((n) => n.position.x));
+          const minY = Math.min(...children.map((n) => n.position.y));
+
+          // We use assumed width/height because node.width isn't always available before render
+          const maxX = Math.max(
+            ...children.map((n) => n.position.x + NODE_WIDTH)
+          );
+          const maxY = Math.max(
+            ...children.map((n) => n.position.y + NODE_HEIGHT)
+          );
+
+          finalNodes.push({
+            id: group.id,
+            type: "group",
+            position: {
+              x: minX - PADDING,
+              y: minY - PADDING * 1.2,
+            },
+            style: {
+              width: maxX - minX + PADDING * 2,
+              height: maxY - minY + PADDING * 2.2,
+            },
+            data: {
+              label: group.label,
+              width: maxX - minX + PADDING * 2,
+              height: maxY - minY + PADDING * 2.2,
+            },
+            selectable: false,
+            draggable: false,
+            deletable: false,
+            zIndex: -1, // Groups sit behind services
+          });
         }
-        if (edge.sourceHandle === "source-top")
-          handleMap[edge.source].sourceTop = true;
-        if (edge.sourceHandle === "source-right")
-          handleMap[edge.source].sourceRight = true;
-        if (edge.sourceHandle === "source-bottom")
-          handleMap[edge.source].sourceBottom = true;
-        if (edge.sourceHandle === "source-left")
-          handleMap[edge.source].sourceLeft = true;
-      }
+      });
+    }
 
-      // Mark target handles
-      if (edge.targetHandle) {
-        if (!handleMap[edge.target]) {
-          handleMap[edge.target] = {};
-        }
-        if (edge.targetHandle === "target-top")
-          handleMap[edge.target].targetTop = true;
-        if (edge.targetHandle === "target-right")
-          handleMap[edge.target].targetRight = true;
-        if (edge.targetHandle === "target-bottom")
-          handleMap[edge.target].targetBottom = true;
-        if (edge.targetHandle === "target-left")
-          handleMap[edge.target].targetLeft = true;
-      }
-    });
-
-    return handleMap;
-  }, [initialEdges]);
-
-  // Web Console section (top) + REST API section (bottom)
-  const initialNodes: Node[] = useMemo(
-    () => [
-      // Web Console group - wraps CloudFront and S3 (Static Assets)
-      {
-        id: "group-web-console",
-        type: "group",
-        position: { x: 130, y: 60 },
-        data: {
-          label: "Web Console",
-          width: 410,
-          height: 140,
-        },
-        selectable: false,
-        draggable: false,
-        deletable: false,
-        zIndex: -1,
-      },
-      // Web Console section - Top
-      {
-        id: "cloudfront",
-        type: "custom",
-        position: { x: 150, y: 80 },
-        data: {
-          label: "Amazon CloudFront",
-          description: "CDN",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/CloudFront.svg",
-          usedHandles: usedHandlesMap["cloudfront"],
-        },
-      },
-      {
-        id: "s3-web",
-        type: "custom",
-        position: { x: 380, y: 80 },
-        data: {
-          label: "Amazon S3",
-          description: "Static Assets",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-          usedHandles: usedHandlesMap["s3-web"],
-        },
-      },
-      // REST API group - wraps API Gateway, Lambda, Cognito, and IAM
-      {
-        id: "group-rest-api",
-        type: "group",
-        position: { x: 130, y: 300 },
-        data: {
-          label: "REST API",
-          width: 410,
-          height: 380,
-        },
-        selectable: false,
-        draggable: false,
-        deletable: false,
-        zIndex: -1,
-      },
-      // REST API section - Bottom (moved down)
-      {
-        id: "api-gateway",
-        type: "custom",
-        position: { x: 150, y: 320 },
-        data: {
-          label: "Amazon API Gateway",
-          description: "REST API",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/App-Integration/API-Gateway.svg",
-          usedHandles: usedHandlesMap["api-gateway"],
-        },
-      },
-      {
-        id: "lambda",
-        type: "custom",
-        position: { x: 380, y: 320 },
-        data: {
-          label: "AWS Lambda",
-          description: "Functions",
-          iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-          usedHandles: usedHandlesMap["lambda"],
-        },
-      },
-      {
-        id: "cognito",
-        type: "custom",
-        position: { x: 150, y: 560 },
-        data: {
-          label: "Amazon Cognito",
-          description: "Auth",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Cognito.svg",
-          usedHandles: usedHandlesMap["cognito"],
-        },
-      },
-      {
-        id: "iam",
-        type: "custom",
-        position: { x: 380, y: 560 },
-        data: {
-          label: "AWS IAM",
-          description: "Permissions",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Identity-and-Access-Management.svg",
-          usedHandles: usedHandlesMap["iam"],
-        },
-      },
-      // Image Pipeline group - wraps Docker Image, S3 (Artifacts), and CodeBuild
-      {
-        id: "group-image-pipeline",
-        type: "group",
-        position: { x: 730, y: 60 },
-        data: {
-          label: "Image Pipeline",
-          width: 640,
-          height: 140,
-        },
-        selectable: false,
-        draggable: false,
-        deletable: false,
-        zIndex: -1,
-      },
-      // Image Pipeline section - Top Right
-      {
-        id: "docker-image",
-        type: "custom",
-        position: { x: 750, y: 80 },
-        data: {
-          label: "Taurus Docker Image",
-          description: "Container",
-          iconUrl:
-            "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg",
-          usedHandles: usedHandlesMap["docker-image"],
-        },
-      },
-      {
-        id: "s3-artifacts",
-        type: "custom",
-        position: { x: 980, y: 80 },
-        data: {
-          label: "Amazon S3",
-          description: "Artifacts",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-          usedHandles: usedHandlesMap["s3-artifacts"],
-        },
-      },
-      {
-        id: "code-build",
-        type: "custom",
-        position: { x: 1210, y: 80 },
-        data: {
-          label: "AWS CodeBuild",
-          description: "Build",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeBuild.svg",
-          usedHandles: usedHandlesMap["code-build"],
-        },
-      },
-      // Load Testing Engine group - wraps S3 (Test Data), Lambda (Orchestration), DynamoDB, SQS, Fargate, ECR, and CloudWatch
-      {
-        id: "group-load-testing",
-        type: "group",
-        position: { x: 730, y: 380 },
-        data: {
-          label: "Load Testing Engine",
-          width: 640,
-          height: 480,
-        },
-        selectable: false,
-        draggable: false,
-        deletable: false,
-        zIndex: -1,
-      },
-      // Load Testing Engine section - Bottom Right
-      {
-        id: "s3-test-data",
-        type: "custom",
-        position: { x: 750, y: 400 },
-        data: {
-          label: "Amazon S3",
-          description: "Test Data",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-          usedHandles: usedHandlesMap["s3-test-data"],
-        },
-      },
-      {
-        id: "lambda-orchestration",
-        type: "custom",
-        position: { x: 980, y: 400 },
-        data: {
-          label: "AWS Lambda",
-          description: "Orchestration",
-          iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-          usedHandles: usedHandlesMap["lambda-orchestration"],
-        },
-      },
-      {
-        id: "dynamodb",
-        type: "custom",
-        position: { x: 1210, y: 400 },
-        data: {
-          label: "Amazon DynamoDB",
-          description: "NoSQL DB",
-          iconUrl: "https://icon.icepanel.io/AWS/svg/Database/DynamoDB.svg",
-          usedHandles: usedHandlesMap["dynamodb"],
-        },
-      },
-      {
-        id: "sqs",
-        type: "custom",
-        position: { x: 750, y: 580 },
-        data: {
-          label: "Amazon SQS",
-          description: "Queue",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Queue-Service.svg",
-          usedHandles: usedHandlesMap["sqs"],
-        },
-      },
-      {
-        id: "fargate",
-        type: "custom",
-        position: { x: 980, y: 580 },
-        data: {
-          label: "AWS Fargate",
-          description: "Container",
-          iconUrl: "https://icon.icepanel.io/AWS/svg/Containers/Fargate.svg",
-          usedHandles: usedHandlesMap["fargate"],
-        },
-      },
-      {
-        id: "ecr",
-        type: "custom",
-        position: { x: 1210, y: 580 },
-        data: {
-          label: "Amazon ECR",
-          description: "Registry",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Containers/Elastic-Container-Registry.svg",
-          usedHandles: usedHandlesMap["ecr"],
-        },
-      },
-      {
-        id: "cloudwatch",
-        type: "custom",
-        position: { x: 980, y: 740 },
-        data: {
-          label: "Amazon CloudWatch",
-          description: "Monitoring",
-          iconUrl:
-            "https://icon.icepanel.io/AWS/svg/Management-Governance/CloudWatch.svg",
-          usedHandles: usedHandlesMap["cloudwatch"],
-        },
-      },
-    ],
-    [usedHandlesMap]
-  );
-
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
+    setNodes(finalNodes);
+    setEdges(finalEdges);
+  }, [architectureData, setNodes, setEdges]);
 
   return (
     <>
@@ -841,6 +482,8 @@ export function DiagramVisualization({
           fitViewOptions={{
             padding: 0.1, // Very minimal padding to zoom in significantly (default is 0.2)
           }}
+          minZoom={0.1}
+          maxZoom={2}
           style={{ width: "100%", height: "100%" }}
           defaultEdgeOptions={{
             type: "step",
