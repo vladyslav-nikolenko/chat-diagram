@@ -10,7 +10,7 @@ import ReactFlow, {
   Handle,
   MarkerType,
 } from "reactflow";
-import dagre from "dagre";
+import ELK from "elkjs/lib/elk.bundled.js";
 import "reactflow/dist/style.css";
 import { ArchitectureData } from "./types";
 
@@ -234,37 +234,177 @@ const nodeTypes = {
 const NODE_WIDTH = 200; // Approximate width of card
 const NODE_HEIGHT = 150; // Approximate height of card
 
-// Uses Dagre to calculate X/Y coordinates for services
-const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
+// Initialize ELK instance
+const elk = new ELK();
 
-  // 'TB' = Top-to-Bottom, 'LR' = Left-to-Right
-  // Using LR to match original horizontal flow style
-  dagreGraph.setGraph({ rankdir: "LR", nodesep: 80, ranksep: 150 });
+// ELK layout options - configured for horizontal flow
+const elkOptions = {
+  "elk.algorithm": "layered",
+  "elk.direction": "RIGHT",
+  "elk.spacing.nodeNode": "50",
+  "elk.spacing.edgeEdge": "25",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "60",
+  "elk.edgeRouting": "ORTHOGONAL",
+};
 
-  nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
-  });
+// Uses ELK.js to calculate X/Y coordinates for services with hierarchical grouping
+// Following the React Flow example pattern: https://reactflow.dev/examples/layout/elkjs
+// Groups are treated as parent nodes, services as children within their groups
+const getLayoutedElements = async (
+  serviceNodes: Node[],
+  edges: Edge[],
+  groups?: ServiceGroup[]
+): Promise<{ nodes: Node[]; edges: Edge[] }> => {
+  // Convert React Flow edges to ELK format (sources/targets arrays)
+  const elkEdges = edges.map((edge) => ({
+    id: edge.id,
+    sources: [edge.source],
+    targets: [edge.target],
+  }));
 
-  edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
-
-  dagre.layout(dagreGraph);
-
-  const layoutedNodes = nodes.map((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
-    return {
-      ...node,
-      position: {
-        x: nodeWithPosition.x - NODE_WIDTH / 2,
-        y: nodeWithPosition.y - NODE_HEIGHT / 2,
-      },
+  // If no groups, layout services flat (original behavior)
+  if (!groups || groups.length === 0) {
+    const graph = {
+      id: "root",
+      layoutOptions: elkOptions,
+      children: serviceNodes.map((node) => ({
+        id: node.id,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+      })),
+      edges: elkEdges,
     };
+
+    const layoutedGraph = await elk.layout(graph);
+
+    return {
+      nodes: (layoutedGraph.children || []).map((elkNode) => {
+        const originalNode =
+          serviceNodes.find((n) => n.id === elkNode.id) || serviceNodes[0];
+        return {
+          ...originalNode,
+          position: { x: elkNode.x || 0, y: elkNode.y || 0 },
+        };
+      }),
+      edges: edges, // Return original React Flow edges
+    };
+  }
+
+  // Build hierarchical structure: groups as parents, services as children
+  const groupMap = new Map<string, ServiceGroup>();
+  groups.forEach((group) => groupMap.set(group.id, group));
+
+  // Group services by their groupId
+  const servicesByGroup = new Map<string, Node[]>();
+  const ungroupedServices: Node[] = [];
+
+  serviceNodes.forEach((node) => {
+    const groupId = (node.data as any)?._groupId;
+    if (groupId && groupMap.has(groupId)) {
+      if (!servicesByGroup.has(groupId)) {
+        servicesByGroup.set(groupId, []);
+      }
+      servicesByGroup.get(groupId)!.push(node);
+    } else {
+      ungroupedServices.push(node);
+    }
   });
 
-  return { nodes: layoutedNodes, edges };
+  // Build ELK graph with hierarchical structure
+  const groupChildren = Array.from(servicesByGroup.entries()).map(
+    ([groupId, services]) => ({
+      id: groupId,
+      // Group nodes don't need explicit width/height - ELK will calculate from children
+      // But we can set minimum dimensions
+      layoutOptions: {
+        "elk.padding": "[top=40,left=40,bottom=40,right=40]",
+      },
+      children: services.map((node) => ({
+        id: node.id,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+      })),
+    })
+  );
+
+  // Add ungrouped services as direct children of root
+  const rootChildren = [
+    ...groupChildren,
+    ...ungroupedServices.map((node) => ({
+      id: node.id,
+      width: NODE_WIDTH,
+      height: NODE_HEIGHT,
+    })),
+  ];
+
+  const graph = {
+    id: "root",
+    layoutOptions: elkOptions,
+    children: rootChildren,
+    edges: elkEdges,
+  };
+
+  const layoutedGraph = await elk.layout(graph);
+
+  // Extract all nodes (both groups and services) from the layouted graph
+  const resultNodes: Node[] = [];
+
+  // Process groups and their children
+  (layoutedGraph.children || []).forEach((elkGroup) => {
+    const group = groupMap.get(elkGroup.id);
+    if (group) {
+      // This is a group node - create React Flow group node
+      resultNodes.push({
+        id: group.id,
+        type: "group",
+        position: { x: elkGroup.x || 0, y: elkGroup.y || 0 },
+        style: {
+          width: elkGroup.width || 200,
+          height: elkGroup.height || 150,
+        },
+        data: {
+          label: group.label,
+          width: elkGroup.width || 200,
+          height: elkGroup.height || 150,
+        },
+        selectable: false,
+        draggable: false,
+        deletable: false,
+        zIndex: -1, // Groups sit behind services
+      });
+
+      // Process children (services) within this group
+      elkGroup.children?.forEach((elkChild) => {
+        const originalNode = serviceNodes.find((n) => n.id === elkChild.id);
+        if (originalNode) {
+          resultNodes.push({
+            ...originalNode,
+            position: {
+              // Position relative to group + group position = absolute position
+              x: (elkGroup.x || 0) + (elkChild.x || 0),
+              y: (elkGroup.y || 0) + (elkChild.y || 0),
+            },
+            zIndex: 10, // Services sit above groups
+          });
+        }
+      });
+    } else {
+      // This is an ungrouped service
+      const originalNode = serviceNodes.find((n) => n.id === elkGroup.id);
+      if (originalNode) {
+        resultNodes.push({
+          ...originalNode,
+          position: { x: elkGroup.x || 0, y: elkGroup.y || 0 },
+          zIndex: 10,
+        });
+      }
+    }
+  });
+
+  return {
+    nodes: resultNodes,
+    edges: edges, // Return original React Flow edges
+  };
 };
 
 // Calculates which handles to show based on the direction of the connection
@@ -362,76 +502,39 @@ export function DiagramVisualization({
       zIndex: 10, // Services sit above groups
     }));
 
-    // --- Step C: Run Auto Layout (Dagre) ---
-    const layoutResult = getLayoutedElements(serviceNodes, rawEdges);
-
-    // --- Step D: Calculate Used Handles ---
-    const { handleMap, edges: finalEdges } = calculateUsedHandles(
-      layoutResult.edges,
-      layoutResult.nodes
-    );
-
-    // Apply calculated handles to the nodes
-    const nodesWithHandles = layoutResult.nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        usedHandles: handleMap[node.id] || {},
-      },
-    }));
-
-    // --- Step E: Generate Group Boxes (Bounding Box Calculation) ---
-    const finalNodes = [...nodesWithHandles];
-
-    if (architectureData.groups) {
-      const PADDING = 40;
-
-      architectureData.groups.forEach((group) => {
-        // Find all nodes that belong to this group
-        const children = nodesWithHandles.filter(
-          (n) => n.data._groupId === group.id
+    // --- Step C: Run Auto Layout (ELK.js) with hierarchical grouping ---
+    getLayoutedElements(serviceNodes, rawEdges, architectureData.groups).then(
+      (layoutResult) => {
+        // --- Step D: Calculate Used Handles ---
+        // Filter out group nodes for handle calculation (only calculate for service nodes)
+        const serviceNodesOnly = layoutResult.nodes.filter(
+          (n) => n.type === "custom"
+        );
+        const { handleMap, edges: finalEdges } = calculateUsedHandles(
+          layoutResult.edges,
+          serviceNodesOnly
         );
 
-        if (children.length > 0) {
-          // Calculate the bounding box
-          const minX = Math.min(...children.map((n) => n.position.x));
-          const minY = Math.min(...children.map((n) => n.position.y));
-
-          // We use assumed width/height because node.width isn't always available before render
-          const maxX = Math.max(
-            ...children.map((n) => n.position.x + NODE_WIDTH)
-          );
-          const maxY = Math.max(
-            ...children.map((n) => n.position.y + NODE_HEIGHT)
-          );
-
-          finalNodes.push({
-            id: group.id,
-            type: "group",
-            position: {
-              x: minX - PADDING,
-              y: minY - PADDING * 1.2,
-            },
-            style: {
-              width: maxX - minX + PADDING * 2,
-              height: maxY - minY + PADDING * 2.2,
-            },
+        // Apply calculated handles to service nodes only
+        const nodesWithHandles = layoutResult.nodes.map((node) => {
+          if (node.type === "group") {
+            // Group nodes don't need handles
+            return node;
+          }
+          return {
+            ...node,
             data: {
-              label: group.label,
-              width: maxX - minX + PADDING * 2,
-              height: maxY - minY + PADDING * 2.2,
+              ...node.data,
+              usedHandles: handleMap[node.id] || {},
             },
-            selectable: false,
-            draggable: false,
-            deletable: false,
-            zIndex: -1, // Groups sit behind services
-          });
-        }
-      });
-    }
+          };
+        });
 
-    setNodes(finalNodes);
-    setEdges(finalEdges);
+        // ELK.js has already calculated group positions and sizes, so we can use them directly
+        setNodes(nodesWithHandles);
+        setEdges(finalEdges);
+      }
+    );
   }, [architectureData, setNodes, setEdges]);
 
   return (
