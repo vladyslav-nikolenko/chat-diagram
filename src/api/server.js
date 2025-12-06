@@ -17,188 +17,141 @@ function getLargeMockArchitecture(provider) {
   
   return {
     // --- 1. GROUPS ---
-    // (Translated from your 'type: "group"' nodes)
+    // Logical separation of your Hybrid Architecture
     groups: [
-      { id: "group-web-console", label: "Web Console" },
-      { id: "group-rest-api", label: "REST API" },
-      { id: "group-image-pipeline", label: "Image Pipeline" },
-      { id: "group-load-testing", label: "Load Testing Engine" }
+      { id: "group-public", label: "Public Layer (VPC)" },
+      { id: "group-core", label: "Core Application (Monolith)" },
+      { id: "group-sim-engine", label: "Simulation Engine (Serverless)" },
+      { id: "group-data", label: "Data & Storage Persistence" }
     ],
 
     // --- 2. SERVICES ---
-    // (Translated from your 'type: "custom"' nodes, with 'groupId' added)
     services: [
-      // Web Console Services
+      // -- Group: Public Layer --
       {
-        id: "cloudfront",
-        label: "Amazon CloudFront",
-        description: "CDN",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/CloudFront.svg",
+        id: "alb",
+        label: "Application Load Balancer",
+        description: "Traffic Entry",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Elastic-Load-Balancing.svg",
         type: "custom",
-        groupId: "group-web-console"
-      },
-      {
-        id: "s3-web",
-        label: "Amazon S3",
-        description: "Static Assets",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-web-console"
-      },
-      // REST API Services
-      {
-        id: "api-gateway",
-        label: "Amazon API Gateway",
-        description: "REST API",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/App-Integration/API-Gateway.svg",
-        type: "custom",
-        groupId: "group-rest-api"
-      },
-      {
-        id: "lambda",
-        label: "AWS Lambda",
-        description: "Functions",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-        type: "custom",
-        groupId: "group-rest-api"
+        groupId: "group-public"
       },
       {
         id: "cognito",
         label: "Amazon Cognito",
-        description: "Auth",
+        description: "User Auth",
         iconUrl: "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Cognito.svg",
         type: "custom",
-        groupId: "group-rest-api"
+        groupId: "group-public"
+      },
+
+      // -- Group: Core Application (EC2 Monolith) --
+      {
+        id: "ec2-app",
+        label: "Amazon EC2",
+        description: "Core Business Logic",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/EC2.svg",
+        type: "custom",
+        groupId: "group-core"
       },
       {
-        id: "iam",
-        label: "AWS IAM",
-        description: "Permissions",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Identity-and-Access-Management.svg",
+        id: "secrets-manager",
+        label: "AWS Secrets Manager",
+        description: "DB Credentials",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Secrets-Manager.svg",
         type: "custom",
-        groupId: "group-rest-api"
+        groupId: "group-core"
       },
-      // Image Pipeline Services
-      {
-        id: "docker-image",
-        label: "Taurus Docker Image",
-        description: "Container",
-        iconUrl: "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      {
-        id: "s3-artifacts",
-        label: "Amazon S3",
-        description: "Artifacts",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      {
-        id: "code-build",
-        label: "AWS CodeBuild",
-        description: "Build",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeBuild.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      // Load Testing Engine Services
-      {
-        id: "s3-test-data",
-        label: "Amazon S3",
-        description: "Test Data",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "lambda-orchestration",
-        label: "AWS Lambda",
-        description: "Orchestration",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "dynamodb",
-        label: "Amazon DynamoDB",
-        description: "NoSQL DB",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Database/DynamoDB.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
+
+      // -- Group: Simulation Engine (The Async Workers) --
       {
         id: "sqs",
         label: "Amazon SQS",
-        description: "Queue",
+        description: "Job Queue",
         iconUrl: "https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Queue-Service.svg",
         type: "custom",
-        groupId: "group-load-testing"
+        groupId: "group-sim-engine"
       },
       {
-        id: "fargate",
-        label: "AWS Fargate",
-        description: "Container",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Containers/Fargate.svg",
+        id: "lambda-worker",
+        label: "AWS Lambda",
+        description: "Math/Sim Worker",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
         type: "custom",
-        groupId: "group-load-testing"
+        groupId: "group-sim-engine"
       },
       {
-        id: "ecr",
-        label: "Amazon ECR",
-        description: "Registry",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Containers/Elastic-Container-Registry.svg",
+        id: "sns",
+        label: "Amazon SNS",
+        description: "Notifications",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Notification-Service.svg",
         type: "custom",
-        groupId: "group-load-testing"
+        groupId: "group-sim-engine"
+      },
+
+      // -- Group: Data Layer --
+      {
+        id: "rds-mysql",
+        label: "Amazon RDS",
+        description: "MySQL Primary DB",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Database/RDS.svg",
+        type: "custom",
+        groupId: "group-data"
       },
       {
-        id: "cloudwatch",
-        label: "Amazon CloudWatch",
-        description: "Monitoring",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Management-Governance/CloudWatch.svg",
+        id: "redis",
+        label: "Amazon ElastiCache",
+        description: "Redis Session/Cache",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Database/ElastiCache.svg",
         type: "custom",
-        groupId: "group-load-testing"
+        groupId: "group-data"
+      },
+      {
+        id: "s3-storage",
+        label: "Amazon S3",
+        description: "Assets & Reports",
+        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
+        type: "custom",
+        groupId: "group-data"
       }
     ],
 
     // --- 3. CONNECTIONS ---
-    // (Translated from your original 'initialEdges')
+    // Mapping the data flow described in the design
     connections: [
-      { id: "web-1", sourceId: "cloudfront", targetId: "s3-web" },
-      { id: "web-to-api", sourceId: "cloudfront", targetId: "api-gateway" },
-      { id: "api-1", sourceId: "api-gateway", targetId: "lambda" },
-      { id: "api-2", sourceId: "api-gateway", targetId: "cognito" },
-      { id: "api-3", sourceId: "cognito", targetId: "iam" },
-      { id: "img-1", sourceId: "docker-image", targetId: "s3-artifacts" },
-      { id: "img-2", sourceId: "s3-artifacts", targetId: "code-build" },
-      { id: "img-4", sourceId: "code-build", targetId: "ecr" },
-      { id: "load-1", sourceId: "lambda-orchestration", targetId: "s3-test-data" },
-      { id: "load-2", sourceId: "lambda-orchestration", targetId: "dynamodb" },
-      { id: "load-3", sourceId: "dynamodb", targetId: "lambda-orchestration" }, // Bidirectional
-      { id: "load-4", sourceId: "sqs", targetId: "lambda-orchestration" },
-      { id: "load-5", sourceId: "lambda-orchestration", targetId: "fargate" },
-      { id: "load-6", sourceId: "fargate", targetId: "ecr" },
-      { id: "load-7", sourceId: "ecr", targetId: "fargate" }, // Bidirectional
-      { id: "load-8", sourceId: "fargate", targetId: "cloudwatch" },
-      { id: "api-to-load-1", sourceId: "lambda", targetId: "lambda-orchestration" },
-      { id: "api-to-load-2", sourceId: "api-gateway", targetId: "sqs" }
+      // Ingress
+      { id: "conn-1", sourceId: "alb", targetId: "ec2-app", label: "HTTP Traffic" },
+      { id: "conn-2", sourceId: "ec2-app", targetId: "cognito", label: "Verify Token" },
+
+      // Core Monolith Dependencies
+      { id: "conn-3", sourceId: "ec2-app", targetId: "rds-mysql", label: "CRUD User Data" },
+      { id: "conn-4", sourceId: "ec2-app", targetId: "redis", label: "Session State" },
+      { id: "conn-5", sourceId: "ec2-app", targetId: "secrets-manager", label: "Fetch Creds" },
+      { id: "conn-6", sourceId: "ec2-app", targetId: "s3-storage", label: "Upload/Read Assets" },
+
+      // The Simulation Offload (The "Decoupled" Magic)
+      { id: "conn-7", sourceId: "ec2-app", targetId: "sqs", label: "Enqueue Sim Job" },
+      { id: "conn-8", sourceId: "sqs", targetId: "lambda-worker", label: "Trigger Processing" },
+      
+      // Worker Logic
+      { id: "conn-9", sourceId: "lambda-worker", targetId: "rds-mysql", label: "Write Financials" },
+      { id: "conn-10", sourceId: "lambda-worker", targetId: "sns", label: "Job Complete" },
+      { id: "conn-11", sourceId: "sns", targetId: "s3-storage", label: "Save PDF Report" }
     ],
 
     // --- 4. PRICING ---
-    // (New mock pricing based on this larger architecture)
+    // Estimated costs for a startup-sized workload
     pricing: [
-      { service: "AWS Fargate", description: "Container (t3.medium)", cost: "$80.50" },
-      { service: "AWS Lambda", description: "Orchestration & Functions", cost: "$15.00" },
-      { service: "DynamoDB", description: "On-Demand Capacity", cost: "$45.00" },
-      { service: "CloudFront / S3", description: "CDN & Storage", cost: "$30.00" },
-      { service: "API Gateway", description: "REST API Requests", cost: "$5.00" },
-      { service: "Cognito & IAM", description: "Auth & Permissions", cost: "$0.00" },
-      { service: "Developer Tools", description: "CodeBuild, ECR", cost: "$5.50" },
-      { service: "Monitoring", description: "CloudWatch, SQS", cost: "$12.00" }
+      { service: "Amazon RDS (MySQL)", description: "db.t3.medium (Multi-AZ)", cost: "$136.00" },
+      { service: "Amazon EC2 + ALB", description: "2x t3.small + Load Balancer", cost: "$60.00" },
+      { service: "Amazon ElastiCache", description: "cache.t3.micro (Redis)", cost: "$17.00" },
+      { service: "AWS Lambda & SQS", description: "Simulation Compute (On-demand)", cost: "$12.50" },
+      { service: "Amazon S3", description: "Storage & Requests", cost: "$5.00" },
+      { service: "Amazon Cognito", description: "MAU < 50,000 (Free Tier)", cost: "$0.00" },
+      { service: "Secrets & CloudWatch", description: "Management Tools", cost: "$8.00" }
     ],
-    totalCost: "$193.00 / mo"
-  };
+    totalCost: "$238.50 / mo"
+};
 }
 
 // --- Main API Endpoint ---
