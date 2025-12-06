@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from "react";
+import React, { useMemo, useEffect, useCallback } from "react";
 import ReactFlow, {
   Node,
   Edge,
@@ -6,13 +6,19 @@ import ReactFlow, {
   Controls,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
+  Panel,
   Position,
   Handle,
   MarkerType,
 } from "reactflow";
 import ELK from "elkjs/lib/elk.bundled.js";
+import { toPng } from "html-to-image";
+import { Download, Loader2 } from "lucide-react";
 import "reactflow/dist/style.css";
 import { ArchitectureData } from "./types";
+import { getIconPathByLabel } from "../utils/iconMapper";
 
 // --- 1. Interfaces (Matches your JSON Structure) ---
 
@@ -108,19 +114,22 @@ function CustomNode({ data }: { data: CustomNodeData }) {
       )}
 
       <div className='flex flex-col items-center gap-2'>
-        {data.iconUrl && (
-          <div className='w-12 h-12 flex items-center justify-center'>
-            <img
-              src={data.iconUrl}
-              alt={data.label}
-              className='w-full h-full object-contain'
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = "none";
-              }}
-            />
-          </div>
-        )}
+        {(() => {
+          const iconPath = getIconPathByLabel(data.label);
+          return iconPath ? (
+            <div className='w-12 h-12 flex items-center justify-center'>
+              <img
+                src={iconPath}
+                alt={data.label}
+                className='w-full h-full object-contain'
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = "none";
+                }}
+              />
+            </div>
+          ) : null;
+        })()}
         <div className='text-center'>
           <p className='text-sm font-semibold text-slate-900'>{data.label}</p>
           {data.description && (
@@ -467,11 +476,145 @@ const calculateUsedHandles = (edges: Edge[], layoutedNodes: Node[]) => {
 
 // --- 4. Main Component ---
 
-export function DiagramVisualization({
+function DiagramVisualizationInner({
   architectureData,
 }: DiagramVisualizationProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [isDownloading, setIsDownloading] = React.useState(false);
+
+  // Download image function with maximum quality settings
+  const downloadImage = useCallback(() => {
+    const reactFlowElement = document.querySelector(
+      ".react-flow"
+    ) as HTMLElement;
+
+    if (!reactFlowElement) {
+      console.error("React Flow element not found");
+      return;
+    }
+
+    // Set loading state
+    setIsDownloading(true);
+
+    // Wait for all images to load before capturing for better quality
+    const images = reactFlowElement.querySelectorAll("img");
+    const imagePromises = Array.from(images).map((img) => {
+      if (img.complete) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve(); // Continue even if image fails
+        // Timeout after 2 seconds
+        setTimeout(() => resolve(), 2000);
+      });
+    });
+
+    Promise.all(imagePromises).then(() => {
+      // Small delay to ensure rendering is complete
+      setTimeout(() => {
+        toPng(reactFlowElement, {
+          backgroundColor: "#ffffff", // White background
+          pixelRatio: 4, // Very high quality (4x resolution for ultra-crisp images)
+          quality: 1.0, // Maximum quality
+          cacheBust: true, // Ensure fresh rendering
+          fontEmbedCSS: "", // Ensure fonts are embedded
+          filter: (node) => {
+            // Filter out controls and minimap
+            const isControls =
+              node.classList?.contains("react-flow__controls") ||
+              node.classList?.contains("react-flow__minimap");
+
+            // Filter out download button and its container (Panel)
+            const isPanel = node.classList?.contains("react-flow__panel");
+            const isButton =
+              node.tagName === "BUTTON" ||
+              node.textContent?.includes("Download") ||
+              node.textContent?.includes("Generating");
+
+            // Filter out React Flow watermark/label at the bottom
+            const isReactFlowLabel =
+              node.textContent?.includes("React Flow") ||
+              node.textContent?.includes("react-flow") ||
+              (node.tagName === "A" &&
+                node.getAttribute("href")?.includes("reactflow")) ||
+              node.classList?.contains("react-flow__attribution");
+
+            // Check if node is inside the panel (parent check)
+            let parent = node.parentElement;
+            let isInsidePanel = false;
+            while (parent && parent !== reactFlowElement) {
+              if (parent.classList?.contains("react-flow__panel")) {
+                isInsidePanel = true;
+                break;
+              }
+              parent = parent.parentElement;
+            }
+
+            return (
+              !isControls &&
+              !isPanel &&
+              !isButton &&
+              !isReactFlowLabel &&
+              !isInsidePanel
+            );
+          },
+        })
+          .then((dataUrl) => {
+            // Crop the image to remove bottom portion (where React Flow label might be)
+            const img = new Image();
+            img.onload = () => {
+              const canvas = document.createElement("canvas");
+              const ctx = canvas.getContext("2d");
+
+              if (!ctx) {
+                // Fallback if canvas not available
+                downloadCroppedImage(dataUrl);
+                return;
+              }
+
+              // Calculate crop: remove bottom 40px (adjust as needed)
+              const cropBottom = 40 * 4; // Account for 4x pixel ratio
+              const width = img.width;
+              const height = img.height - cropBottom;
+
+              canvas.width = width;
+              canvas.height = height;
+
+              // Draw the cropped image
+              ctx.drawImage(img, 0, 0, width, height, 0, 0, width, height);
+
+              // Convert to data URL and download
+              const croppedDataUrl = canvas.toDataURL("image/png", 1.0);
+              downloadCroppedImage(croppedDataUrl);
+            };
+            img.onerror = () => {
+              // Fallback to original if cropping fails
+              downloadCroppedImage(dataUrl);
+            };
+            img.src = dataUrl;
+
+            const downloadCroppedImage = (imageDataUrl: string) => {
+              const link = document.createElement("a");
+              link.download = "architecture-diagram.png";
+              link.href = imageDataUrl;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              // Clear loading state after download
+              setIsDownloading(false);
+            };
+          })
+          .catch((err) => {
+            console.error("Error generating image:", err);
+            alert("Failed to generate image. Please try again.");
+            // Clear loading state on error
+            setIsDownloading(false);
+          });
+      }, 100);
+    });
+  }, []);
 
   useEffect(() => {
     if (!architectureData || !architectureData.services) return;
@@ -494,7 +637,7 @@ export function DiagramVisualization({
       data: {
         label: svc.label,
         description: svc.description,
-        iconUrl: svc.iconUrl,
+        iconUrl: getIconPathByLabel(svc.label), // Get icon path from label
         usedHandles: {},
         _groupId: svc.groupId, // Temporary store for group calc
       },
@@ -540,6 +683,14 @@ export function DiagramVisualization({
   return (
     <>
       <style>{`
+        @keyframes spin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
         .react-flow__node {
           border: none !important;
           outline: none !important;
@@ -572,7 +723,7 @@ export function DiagramVisualization({
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: "#f1f5f9",
+          backgroundColor: "#ffffff",
         }}
       >
         <ReactFlow
@@ -597,8 +748,43 @@ export function DiagramVisualization({
         >
           <Background color='#e2e8f0' gap={20} />
           <Controls />
+          <Panel position='top-right'>
+            <button
+              onClick={downloadImage}
+              disabled={isDownloading}
+              className='flex items-center gap-2 px-4 py-2 bg-white border-2 border-slate-300 rounded-lg shadow-md hover:shadow-lg hover:bg-slate-50 transition-all text-slate-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed'
+              title='Download as Image'
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2
+                    size={18}
+                    className='animate-spin'
+                    style={{ animation: "spin 1s linear infinite" }}
+                  />
+                  <span>Generating...</span>
+                </>
+              ) : (
+                <>
+                  <Download size={18} />
+                  <span>Download Image</span>
+                </>
+              )}
+            </button>
+          </Panel>
         </ReactFlow>
       </div>
     </>
+  );
+}
+
+// Export wrapper with ReactFlowProvider
+export function DiagramVisualization({
+  architectureData,
+}: DiagramVisualizationProps) {
+  return (
+    <ReactFlowProvider>
+      <DiagramVisualizationInner architectureData={architectureData} />
+    </ReactFlowProvider>
   );
 }
