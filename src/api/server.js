@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { DiagramPrompt, PricingPrompt, AWS_SERVICES } = require('./constant');
 
 const app = express();
 const PORT = 3000; // Your backend runs on port 3000
@@ -8,215 +9,170 @@ const PORT = 3000; // Your backend runs on port 3000
 app.use(cors()); // Allows your React app (on port 5173) to call this server
 app.use(express.json()); // Allows the server to read JSON from the request body
 
-/**
- * Generates the large, specific mock architecture.
- * We've translated your 'initialNodes' and 'initialEdges' into this structure.
- */
-function getLargeMockArchitecture(provider) {
-  // We ignore the provider for now, but this is where you could add logic
-  
-  return {
-    // --- 1. GROUPS ---
-    // (Translated from your 'type: "group"' nodes)
-    groups: [
-      { id: "group-web-console", label: "Web Console" },
-      { id: "group-rest-api", label: "REST API" },
-      { id: "group-image-pipeline", label: "Image Pipeline" },
-      { id: "group-load-testing", label: "Load Testing Engine" }
-    ],
+// --- Helpers ---
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-    // --- 2. SERVICES ---
-    // (Translated from your 'type: "custom"' nodes, with 'groupId' added)
-    services: [
-      // Web Console Services
-      {
-        id: "cloudfront",
-        label: "Amazon CloudFront",
-        description: "CDN",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/CloudFront.svg",
-        type: "custom",
-        groupId: "group-web-console"
-      },
-      {
-        id: "s3-web",
-        label: "Amazon S3",
-        description: "Static Assets",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-web-console"
-      },
-      // REST API Services
-      {
-        id: "api-gateway",
-        label: "Amazon API Gateway",
-        description: "REST API",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/App-Integration/API-Gateway.svg",
-        type: "custom",
-        groupId: "group-rest-api"
-      },
-      {
-        id: "lambda",
-        label: "AWS Lambda",
-        description: "Functions",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-        type: "custom",
-        groupId: "group-rest-api"
-      },
-      {
-        id: "cognito",
-        label: "Amazon Cognito",
-        description: "Auth",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Cognito.svg",
-        type: "custom",
-        groupId: "group-rest-api"
-      },
-      {
-        id: "iam",
-        label: "AWS IAM",
-        description: "Permissions",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Security-Identity-Compliance/Identity-and-Access-Management.svg",
-        type: "custom",
-        groupId: "group-rest-api"
-      },
-      // Image Pipeline Services
-      {
-        id: "docker-image",
-        label: "Taurus Docker Image",
-        description: "Container",
-        iconUrl: "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/docker/docker-original.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      {
-        id: "s3-artifacts",
-        label: "Amazon S3",
-        description: "Artifacts",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      {
-        id: "code-build",
-        label: "AWS CodeBuild",
-        description: "Build",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Developer-Tools/CodeBuild.svg",
-        type: "custom",
-        groupId: "group-image-pipeline"
-      },
-      // Load Testing Engine Services
-      {
-        id: "s3-test-data",
-        label: "Amazon S3",
-        description: "Test Data",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Storage/Simple-Storage-Service.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "lambda-orchestration",
-        label: "AWS Lambda",
-        description: "Orchestration",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Compute/Lambda.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "dynamodb",
-        label: "Amazon DynamoDB",
-        description: "NoSQL DB",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Database/DynamoDB.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "sqs",
-        label: "Amazon SQS",
-        description: "Queue",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/App-Integration/Simple-Queue-Service.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "fargate",
-        label: "AWS Fargate",
-        description: "Container",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Containers/Fargate.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "ecr",
-        label: "Amazon ECR",
-        description: "Registry",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Containers/Elastic-Container-Registry.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      },
-      {
-        id: "cloudwatch",
-        label: "Amazon CloudWatch",
-        description: "Monitoring",
-        iconUrl: "https://icon.icepanel.io/AWS/svg/Management-Governance/CloudWatch.svg",
-        type: "custom",
-        groupId: "group-load-testing"
-      }
-    ],
+function ensureEnv() {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not set in environment');
+  }
+}
 
-    // --- 3. CONNECTIONS ---
-    // (Translated from your original 'initialEdges')
-    connections: [
-      { id: "web-1", sourceId: "cloudfront", targetId: "s3-web" },
-      { id: "web-to-api", sourceId: "cloudfront", targetId: "api-gateway" },
-      { id: "api-1", sourceId: "api-gateway", targetId: "lambda" },
-      { id: "api-2", sourceId: "api-gateway", targetId: "cognito" },
-      { id: "api-3", sourceId: "cognito", targetId: "iam" },
-      { id: "img-1", sourceId: "docker-image", targetId: "s3-artifacts" },
-      { id: "img-2", sourceId: "s3-artifacts", targetId: "code-build" },
-      { id: "img-4", sourceId: "code-build", targetId: "ecr" },
-      { id: "load-1", sourceId: "lambda-orchestration", targetId: "s3-test-data" },
-      { id: "load-2", sourceId: "lambda-orchestration", targetId: "dynamodb" },
-      { id: "load-3", sourceId: "dynamodb", targetId: "lambda-orchestration" }, // Bidirectional
-      { id: "load-4", sourceId: "sqs", targetId: "lambda-orchestration" },
-      { id: "load-5", sourceId: "lambda-orchestration", targetId: "fargate" },
-      { id: "load-6", sourceId: "fargate", targetId: "ecr" },
-      { id: "load-7", sourceId: "ecr", targetId: "fargate" }, // Bidirectional
-      { id: "load-8", sourceId: "fargate", targetId: "cloudwatch" },
-      { id: "api-to-load-1", sourceId: "lambda", targetId: "lambda-orchestration" },
-      { id: "api-to-load-2", sourceId: "api-gateway", targetId: "sqs" }
-    ],
+function extractJsonFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  // Try plain JSON first
+  try {
+    return JSON.parse(text);
+  } catch (_) {}
+  // Try to extract JSON between code fences or first/last braces
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const candidate = fenceMatch ? fenceMatch[1] : (() => {
+    const first = text.indexOf('{');
+    const last = text.lastIndexOf('}');
+    if (first !== -1 && last !== -1 && last > first) {
+      return text.slice(first, last + 1);
+    }
+    return null;
+  })();
+  if (!candidate) return null;
+  try {
+    return JSON.parse(candidate);
+  } catch (e) {
+    return null;
+  }
+}
 
-    // --- 4. PRICING ---
-    // (New mock pricing based on this larger architecture)
-    pricing: [
-      { service: "AWS Fargate", description: "Container (t3.medium)", cost: "$80.50" },
-      { service: "AWS Lambda", description: "Orchestration & Functions", cost: "$15.00" },
-      { service: "DynamoDB", description: "On-Demand Capacity", cost: "$45.00" },
-      { service: "CloudFront / S3", description: "CDN & Storage", cost: "$30.00" },
-      { service: "API Gateway", description: "REST API Requests", cost: "$5.00" },
-      { service: "Cognito & IAM", description: "Auth & Permissions", cost: "$0.00" },
-      { service: "Developer Tools", description: "CodeBuild, ECR", cost: "$5.50" },
-      { service: "Monitoring", description: "CloudWatch, SQS", cost: "$12.00" }
-    ],
-    totalCost: "$193.00 / mo"
-  };
+async function callOpenAI(messages) {
+  ensureEnv();
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages,
+      temperature: 0.2,
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`OpenAI API error ${resp.status}: ${t}`);
+  }
+  const data = await resp.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  return content;
+}
+
+function normalizePricing(pricingJson) {
+  const pricing = Array.isArray(pricingJson?.pricing) ? pricingJson.pricing : [];
+  const totalEstimatedCost = pricingJson?.totalEstimatedCost || pricingJson?.total || pricingJson?.totalCost;
+  let totalCost = typeof totalEstimatedCost === 'string' ? totalEstimatedCost : '';
+  if (totalCost && !/\/\s*mo/i.test(totalCost)) {
+    totalCost = `${totalCost} / mo`;
+  }
+  return { pricing, totalCost: totalCost || '' };
 }
 
 // --- Main API Endpoint ---
-app.post('/api/generate-architecture', (req, res) => {
-  // Log what we received from the frontend
-  console.log('Received request at /api/generate-architecture');
-  console.log('Request body:', req.body);
+app.post('/api/generate-architecture', async (req, res) => {
+  try {
+    console.log('Received request at /api/generate-architecture');
+    const { prompt, provider, config } = req.body || {};
 
-  const { provider } = req.body;
+    const userContext = {
+      provider: provider || 'aws',
+      requirements: prompt || '',
+      config: config || {},
+      now: new Date().toISOString(),
+    };
 
-  // Get our new, large mock data
-  const mockData = getLargeMockArchitecture(provider);
+    // 1) Ask for architecture JSON
+    const diagramMessages = [
+      { role: 'system', content: DiagramPrompt },
+      { role: 'user', content: `User requirements and context (JSON):\n${JSON.stringify(userContext, null, 2)}\n\nReturn only valid JSON.` },
+    ];
 
-  // Simulate network delay (as if AI is thinking)
-  setTimeout(() => {
-    // Return mock data as JSON
-    res.json(mockData);
-  }, 1000); // 1 second
+    const archContent = await callOpenAI(diagramMessages);
+    const architecture = extractJsonFromText(archContent);
+    if (!architecture || !Array.isArray(architecture.groups) || !Array.isArray(architecture.services) || !Array.isArray(architecture.connections)) {
+      throw new Error('Failed to parse architecture JSON from AI response');
+    }
+
+    // Post-process: attach icons and normalize types based on curated AWS services
+    try {
+      const idToService = new Map();
+      const nameToService = new Map();
+      const aliasToService = new Map();
+      for (const svc of AWS_SERVICES) {
+        if (svc.id) idToService.set(String(svc.id).toLowerCase(), svc);
+        nameToService.set(svc.name.toLowerCase(), svc);
+        if (Array.isArray(svc.aliases)) {
+          for (const a of svc.aliases) aliasToService.set(String(a).toLowerCase(), svc);
+        }
+      }
+      const resolveByLabelOrAlias = (label) => {
+        if (!label) return null;
+        const key = String(label).toLowerCase().trim();
+        return (nameToService.get(key) || aliasToService.get(key)) || null;
+      };
+      const needsIcon = (iconUrl) => {
+        if (!iconUrl) return true;
+        const s = String(iconUrl);
+        return !(s.startsWith('/icons/') || s.startsWith('http://') || s.startsWith('https://'));
+      };
+
+      architecture.services = (architecture.services || []).map((srv) => {
+        let match = null;
+        if (srv.serviceId) {
+          const idKey = String(srv.serviceId).toLowerCase().trim();
+          match = idToService.get(idKey) || null;
+        }
+        if (!match) {
+          match = resolveByLabelOrAlias(srv.label) || resolveByLabelOrAlias(srv?.name) || null;
+        }
+        if (match && needsIcon(srv.iconUrl)) {
+          srv.iconUrl = match.iconPath;
+        }
+        if (!srv.type) srv.type = 'custom';
+        return srv;
+      });
+    } catch (e) {
+      console.warn('Post-processing services failed:', e);
+    }
+
+    // 2) Ask for pricing JSON within the same context (include previous assistant message)
+    const pricingMessages = [
+      { role: 'system', content: DiagramPrompt },
+      { role: 'user', content: `User requirements and context (JSON):\n${JSON.stringify(userContext, null, 2)}` },
+      { role: 'assistant', content: JSON.stringify(architecture) },
+      { role: 'system', content: PricingPrompt },
+      { role: 'user', content: 'Provide monthly pricing JSON for the above architecture. Return only valid JSON.' },
+    ];
+
+    const pricingContent = await callOpenAI(pricingMessages);
+    const pricingJson = extractJsonFromText(pricingContent);
+    if (!pricingJson || !Array.isArray(pricingJson.pricing)) {
+      throw new Error('Failed to parse pricing JSON from AI response');
+    }
+
+    const { pricing, totalCost } = normalizePricing(pricingJson);
+
+    const response = {
+      groups: architecture.groups || [],
+      services: architecture.services || [],
+      connections: architecture.connections || [],
+      pricing,
+      totalCost: totalCost || '',
+    };
+
+    res.json(response);
+  } catch (err) {
+    console.error('Error in /api/generate-architecture:', err);
+    res.status(502).json({ error: 'Failed to generate architecture/pricing', details: String(err?.message || err) });
+  }
 });
 
 // --- Start Server ---
