@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+//const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 
 const app = express();
 const PORT = 3000; // Your backend runs on port 3000
@@ -7,7 +9,7 @@ const PORT = 3000; // Your backend runs on port 3000
 // --- Middleware ---
 app.use(cors()); // Allows your React app (on port 5173) to call this server
 app.use(express.json()); // Allows the server to read JSON from the request body
-
+//const genAI = new GoogleGenerativeAI("AIzaSyCv-7eJIr93I0jZ0YKJF9qc_CErMHHS8x0");
 /**
  * Generates the large, specific mock architecture.
  * We've translated your 'initialNodes' and 'initialEdges' into this structure.
@@ -202,21 +204,78 @@ function getLargeMockArchitecture(provider) {
 }
 
 // --- Main API Endpoint ---
-app.post('/api/generate-architecture', (req, res) => {
+app.post('/api/generate-architecture', async (req, res) => {
   // Log what we received from the frontend
   console.log('Received request at /api/generate-architecture');
   console.log('Request body:', req.body);
 
-  const { provider } = req.body;
+  const { provider, prompt } = req.body;
 
-  // Get our new, large mock data
-  const mockData = getLargeMockArchitecture(provider);
+try {
+    //const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+    const promptRun = `
+      Act as a Cloud Architect.
+      Generate a AWS Cloud architecture diagram for the following use case: 
+      ${prompt}
 
-  // Simulate network delay (as if AI is thinking)
-  setTimeout(() => {
-    // Return mock data as JSON
+      You must return ONLY a JSON object.
+      The JSON structure must be:
+      {
+        "groups": [
+          { "id": "group-public", "label": "Name of Group"},
+        ],
+        "services": [
+            {
+            id: "alb",
+            label: "Application Load Balancer",
+            description: "Traffic Entry",
+            iconUrl: "https://icon.icepanel.io/AWS/svg/Networking-Content-Delivery/Elastic-Load-Balancing.svg",
+            type: "custom",
+            groupId: "group-public"
+          },
+        ],
+        "connections": [
+          { id: "conn-1", sourceId: "alb", targetId: "ec2-app", label: "HTTP Traffic" },
+        ],
+        "pricing": [
+           { service: "Amazon RDS (MySQL)", description: "db.t3.medium (Multi-AZ)", cost: "$136.00" },
+        ],
+        totalCost: "$238.50 / mo"
+      }
+    `;
+    const ai = new GoogleGenAI({
+      apiKey: "AIzaSyCv-7eJIr93I0jZ0YKJF9qc_CErMHHS8x0"
+    });
+     const response = await ai.models.generateContent({
+      model: "gemini-3-pro-preview",
+      contents: promptRun,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+    debugger;
+  console.log(response);
+    // const result = await model.generateContent(prompt);
+    // const response = await result.response;
+    // let text = response.text();
+    let jsonString = response.text || response.candidates[0].content.parts[0].text;
+    const architectureData = JSON.parse(jsonString);
+    res.json(architectureData);
+    
+    const mockData = getLargeMockArchitecture(response);
     res.json(mockData);
-  }, 1000); // 1 second
+  } catch (error) {
+    console.error("Error generating architecture:", error);
+    res.status(500).json({ 
+      error: "Failed to generate architecture", 
+      details: error.message 
+    });
+  }
+  // Simulate network delay (as if AI is thinking)
+  // setTimeout(() => {
+  //   // Return mock data as JSON
+  //   res.json(mockData);
+  // }, 1000); // 1 second
 });
 
 // --- Start Server ---
