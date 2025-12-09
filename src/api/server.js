@@ -9,14 +9,7 @@ const PORT = 3000; // Your backend runs on port 3000
 // --- Middleware ---
 app.use(cors()); // Allows your React app (on port 5173) to call this server
 app.use(express.json()); // Allows the server to read JSON from the request body
-//const genAI = new GoogleGenerativeAI("AIzaSyCv-7eJIr93I0jZ0YKJF9qc_CErMHHS8x0");
-/**
- * Generates the large, specific mock architecture.
- * We've translated your 'initialNodes' and 'initialEdges' into this structure.
- */
 function getLargeMockArchitecture(provider) {
-  // We ignore the provider for now, but this is where you could add logic
-  
   return {
     // --- 1. GROUPS ---
     // (Translated from your 'type: "group"' nodes)
@@ -244,7 +237,7 @@ try {
       }
     `;
     const ai = new GoogleGenAI({
-      apiKey: "AIzaSyCv-7eJIr93I0jZ0YKJF9qc_CErMHHS8x0"
+      apiKey: ""
     });
      const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
@@ -262,8 +255,8 @@ try {
     const architectureData = JSON.parse(jsonString);
     res.json(architectureData);
     
-    const mockData = getLargeMockArchitecture(response);
-    res.json(mockData);
+    // const mockData = getLargeMockArchitecture(response);
+    // res.json(mockData);
   } catch (error) {
     console.error("Error generating architecture:", error);
     res.status(500).json({ 
@@ -271,14 +264,8 @@ try {
       details: error.message 
     });
   }
-  // Simulate network delay (as if AI is thinking)
-  // setTimeout(() => {
-  //   // Return mock data as JSON
-  //   res.json(mockData);
-  // }, 1000); // 1 second
 });
 
-// --- Start Server ---
 app.listen(PORT, () => {
   console.log(`Server successfully started at http://localhost:${PORT}`);
   console.log('Waiting for requests at /api/generate-architecture ...');
