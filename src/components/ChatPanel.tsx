@@ -29,6 +29,8 @@ interface ChatPanelProps {
   setSelectedProvider: (provider: string) => void;
 }
 
+const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+
 export function ChatPanel({
   messages,
   setMessages,
@@ -84,16 +86,13 @@ export function ChatPanel({
         },
       };
 
-      const response = await fetch(
-        "http://localhost:3000/api/generate-architecture",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        }
-      );
+      const response = await fetch(`${apiUrl}/generate-architecture`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
